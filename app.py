@@ -2,34 +2,85 @@ import streamlit as st
 import pandas as pd
 import os
 
-st.set_page_config(page_title="Courier AI Ranking", layout="wide")
-st.title("🏆🚚 Courier AI Ranking System (Enterprise V7)")
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="Courier Control Tower", layout="wide")
+st.title("🚚🤖 AI Courier Control Tower (Stable Edition)")
 
 BASE_DIR = os.path.dirname(__file__)
 
-def load_csv(name):
-    path = os.path.join(BASE_DIR, name)
-    return pd.read_csv(path, encoding="utf-8", low_memory=False)
+# =========================
+# SAFE CSV LOADER (NO CRASH)
+# =========================
+def load_csv(file_name):
+    path = os.path.join(BASE_DIR, file_name)
+
+    st.write(f"📂 Loading: {file_name}")
+
+    # File not found
+    if not os.path.exists(path):
+        st.error(f"❌ File not found: {file_name}")
+        return None
+
+    # File size check
+    size = os.path.getsize(path)
+    st.write(f"📏 File size: {size} bytes")
+
+    if size < 10:
+        st.error(f"❌ File is empty or corrupted: {file_name}")
+        return None
+
+    # Try reading CSV safely
+    try:
+        df = pd.read_csv(path, encoding="utf-8", low_memory=False)
+    except:
+        try:
+            df = pd.read_csv(path, encoding="latin1", low_memory=False)
+        except Exception as e:
+            st.error(f"❌ Cannot parse CSV: {file_name}")
+            st.code(str(e))
+            return None
+
+    # Final validation
+    if df is None or df.empty:
+        st.error(f"❌ No data inside file: {file_name}")
+        return None
+
+    return df
+
 
 # =========================
-# LOAD DATA
+# LOAD FILES
 # =========================
 deliveries = load_csv("deliveries.csv")
 stops = load_csv("stops.csv")
 
-st.success("Data Loaded ✅")
+if deliveries is None or stops is None:
+    st.warning("⚠️ Fix CSV files and re-upload to GitHub")
+    st.stop()
+
+st.success("Data Loaded Successfully ✅")
 
 # =========================
-# CLEAN
+# CLEAN COLUMNS
 # =========================
 deliveries.columns = deliveries.columns.str.strip()
 stops.columns = stops.columns.str.strip()
 
+# =========================
 # FORCE COURIER COLUMN
+# =========================
 COURIER = "Couier ID"
 
+if COURIER not in deliveries.columns or COURIER not in stops.columns:
+    st.error("❌ 'Couier ID' column not found in one of the files")
+    st.write("Deliveries columns:", deliveries.columns)
+    st.write("Stops columns:", stops.columns)
+    st.stop()
+
 # =========================
-# TIME FEATURE
+# TIME HANDLING
 # =========================
 time_col = None
 for c in deliveries.columns:
@@ -44,7 +95,7 @@ else:
     deliveries["Before12"] = False
 
 # =========================
-# EXCEPTION DETECTION
+# EXCEPTION LOGIC
 # =========================
 info_col = None
 for c in stops.columns:
@@ -62,7 +113,7 @@ else:
     stops["Exception"] = False
 
 # =========================
-# KPI BUILD
+# KPI ENGINE
 # =========================
 delivery_kpi = deliveries.groupby(COURIER).agg(
     Total_Deliveries=(COURIER, "count"),
@@ -75,33 +126,28 @@ stop_kpi = stops.groupby(COURIER).agg(
 ).reset_index()
 
 # =========================
-# MERGE
+# MERGE DATA
 # =========================
 df = pd.merge(delivery_kpi, stop_kpi, on=COURIER, how="outer").fillna(0)
 
 # =========================
-# AI SCORING ENGINE
+# AI SCORE
 # =========================
-df["Before12_Rate"] = df["Before12_Rate"] * 100
-df["Exception_Rate"] = df["Exception_Rate"] * 100
+df["Before12_Rate"] *= 100
+df["Exception_Rate"] *= 100
 
 df["AI_Score"] = (
-    df["Before12_Rate"] * 0.4 +
-    (100 - df["Exception_Rate"]) * 0.4 +
-    (df["Total_Deliveries"] / (df["Total_Deliveries"].max() + 1)) * 20
+    df["Before12_Rate"] * 0.5 +
+    (100 - df["Exception_Rate"]) * 0.5
 )
 
-# =========================
-# RANKING
-# =========================
-df["Rank"] = df["AI_Score"].rank(ascending=False)
-
 df = df.sort_values("AI_Score", ascending=False)
+df["Rank"] = df["AI_Score"].rank(ascending=False)
 
 # =========================
 # UI
 # =========================
-st.subheader("🏆 Courier Ranking Table")
+st.subheader("🏆 Courier Ranking")
 
 st.dataframe(
     df[[COURIER, "Total_Deliveries", "Total_Stops",
@@ -110,26 +156,22 @@ st.dataframe(
 )
 
 # =========================
-# TOP PERFORMER
+# TOP COURIER
 # =========================
 top = df.iloc[0]
-
 st.success(f"🥇 Top Courier: {top[COURIER]} | Score: {round(top['AI_Score'],2)}")
 
 # =========================
-# SELECT COURIER PROFILE
+# PROFILE VIEW
 # =========================
 courier = st.selectbox("👤 Select Courier", df[COURIER].astype(str).unique())
 
 profile = df[df[COURIER] == courier].iloc[0]
 
-st.subheader("📊 Courier Profile")
-
 col1, col2, col3 = st.columns(3)
 
 col1.metric("🚚 Deliveries", int(profile["Total_Deliveries"]))
 col2.metric("⏰ Before 12%", f"{round(profile['Before12_Rate'],2)}%")
-col3.metric("⚠️ Exception%", f"{round(profile['Exception_Rate'],2)}%")
+col3.metric("⚠️ Exceptions%", f"{round(profile['Exception_Rate'],2)}%")
 
 st.metric("🏆 AI Score", round(profile["AI_Score"], 2))
-st.write(deliveries.head() if deliveries is not None else "NO DATA")
