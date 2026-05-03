@@ -5,23 +5,17 @@ import plotly.express as px
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="Control Tower V2", layout="wide")
+st.set_page_config(page_title="Courier Control Tower", layout="wide")
 
-st.title("🚚 Courier Control Tower V2 (Enterprise Dashboard)")
-
-# =========================
-# DATA SOURCES
-# =========================
-DELIVERY_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/deliveries.csv"
-STOPS_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/stops.csv"
+st.title("🚚 Courier Operations Control Tower")
 
 # =========================
-# LOAD DATA
+# LOAD DATA (LOCAL FILES ON GITHUB REPO)
 # =========================
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DELIVERY_URL)
-    stops = pd.read_csv(STOPS_URL)
+    df = pd.read_csv("deliveries.csv")
+    stops = pd.read_csv("stops.csv")
     return df, stops
 
 df, stops = load_data()
@@ -29,7 +23,7 @@ df, stops = load_data()
 st.success("✅ Data Loaded Successfully")
 
 # =========================
-# CLEAN
+# CLEAN COLUMNS
 # =========================
 df.columns = df.columns.str.strip()
 stops.columns = stops.columns.str.strip()
@@ -37,18 +31,20 @@ stops.columns = stops.columns.str.strip()
 courier_col = "Courier Id"
 
 # =========================
-# TIME FEATURE
+# DATE/TIME HANDLING
 # =========================
-df["Act Tm"] = pd.to_datetime(df["Act Tm"], errors="coerce")
+if "Act Tm" in df.columns:
+    df["Act Tm"] = pd.to_datetime(df["Act Tm"], errors="coerce")
 
-# Before 12 KPI
+# =========================
+# KPI FLAGS
+# =========================
 df["Before_12"] = df["Act Tm"].dt.hour < 12
 
-# Exception KPI
 df["Exception"] = df.get("Act Ckpt Code", "") != "OK"
 
 # =========================
-# KPI ENGINE
+# KPI CALCULATION
 # =========================
 kpi = df.groupby(courier_col).agg(
     Deliveries=(courier_col, "count"),
@@ -60,15 +56,12 @@ kpi["Before 12 %"] = (kpi["Before_12"] / kpi["Deliveries"]) * 100
 kpi["Exception %"] = (kpi["Exceptions"] / kpi["Deliveries"]) * 100
 
 # =========================
-# SCORE ENGINE (NEW)
+# PERFORMANCE SCORE (NEW)
 # =========================
-kpi["Performance Score"] = (
-    kpi["Before 12 %"] * 0.6
-    - kpi["Exception %"] * 0.4
-)
+kpi["Score"] = (kpi["Before 12 %"] * 0.6) - (kpi["Exception %"] * 0.4)
 
 # =========================
-# HEADER KPI
+# HEADER KPIs
 # =========================
 c1, c2, c3 = st.columns(3)
 
@@ -79,11 +72,11 @@ c3.metric("Avg Exception%", f"{kpi['Exception %'].mean():.1f}%")
 st.divider()
 
 # =========================
-# TOP PERFORMERS
+# TOP PERFORMANCE
 # =========================
 st.subheader("🏆 Top Couriers")
 
-top = kpi.sort_values("Performance Score", ascending=False)
+top = kpi.sort_values("Score", ascending=False)
 
 st.dataframe(top, use_container_width=True)
 
@@ -93,7 +86,7 @@ st.dataframe(top, use_container_width=True)
 fig = px.bar(
     top,
     x=courier_col,
-    y="Performance Score",
+    y="Score",
     title="Courier Performance Score"
 )
 
@@ -102,7 +95,7 @@ st.plotly_chart(fig, use_container_width=True)
 # =========================
 # LOW PERFORMANCE
 # =========================
-st.subheader("🚨 Low Performance")
+st.subheader("🚨 Low Performance Couriers")
 
 st.dataframe(
     kpi.sort_values("Exception %", ascending=False).head(10),
