@@ -1,21 +1,22 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
 # =========================
-# PAGE CONFIG
+# CONFIG
 # =========================
-st.set_page_config(page_title="Courier Control Tower", layout="wide")
+st.set_page_config(page_title="Control Tower V2", layout="wide")
 
-st.title("🚚 Courier Operations Control Tower (Live)")
+st.title("🚚 Courier Control Tower V2 (Enterprise Dashboard)")
 
 # =========================
-# GITHUB RAW LINKS (CHANGE THESE)
+# DATA SOURCES
 # =========================
 DELIVERY_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/deliveries.csv"
 STOPS_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/stops.csv"
 
 # =========================
-# LOAD DATA (CACHE FOR SPEED)
+# LOAD DATA
 # =========================
 @st.cache_data
 def load_data():
@@ -25,10 +26,10 @@ def load_data():
 
 df, stops = load_data()
 
-st.success("✅ Data Loaded from GitHub")
+st.success("✅ Data Loaded Successfully")
 
 # =========================
-# CLEAN COLUMNS
+# CLEAN
 # =========================
 df.columns = df.columns.str.strip()
 stops.columns = stops.columns.str.strip()
@@ -36,94 +37,80 @@ stops.columns = stops.columns.str.strip()
 courier_col = "Courier Id"
 
 # =========================
-# DATETIME HANDLING
+# TIME FEATURE
 # =========================
-if "Act Tm" in df.columns:
-    df["Act Tm"] = pd.to_datetime(df["Act Tm"], errors="coerce")
+df["Act Tm"] = pd.to_datetime(df["Act Tm"], errors="coerce")
+
+# Before 12 KPI
+df["Before_12"] = df["Act Tm"].dt.hour < 12
+
+# Exception KPI
+df["Exception"] = df.get("Act Ckpt Code", "") != "OK"
 
 # =========================
-# KPI FLAGS
+# KPI ENGINE
 # =========================
-df["Before_12"] = df["Act Tm"].dt.time < pd.to_datetime("12:00").time()
-
-df["Exception"] = ~df.get("Act Ckpt Code", pd.Series([""] * len(df))).isin(["OK"])
-
-# =========================
-# DELIVERY KPI
-# =========================
-delivery_kpi = df.groupby(courier_col).agg(
-    Total_Deliveries=(courier_col, "count"),
+kpi = df.groupby(courier_col).agg(
+    Deliveries=(courier_col, "count"),
     Before_12=("Before_12", "sum"),
     Exceptions=("Exception", "sum")
 ).reset_index()
 
-delivery_kpi["Before 12 %"] = delivery_kpi["Before_12"] / delivery_kpi["Total_Deliveries"] * 100
-delivery_kpi["Exception %"] = delivery_kpi["Exceptions"] / delivery_kpi["Total_Deliveries"] * 100
+kpi["Before 12 %"] = (kpi["Before_12"] / kpi["Deliveries"]) * 100
+kpi["Exception %"] = (kpi["Exceptions"] / kpi["Deliveries"]) * 100
 
 # =========================
-# STOP KPI
+# SCORE ENGINE (NEW)
 # =========================
-if courier_col in stops.columns:
-    stop_kpi = stops.groupby(courier_col).agg(
-        Total_Stops=(courier_col, "count")
-    ).reset_index()
-else:
-    stop_kpi = pd.DataFrame(columns=[courier_col, "Total_Stops"])
+kpi["Performance Score"] = (
+    kpi["Before 12 %"] * 0.6
+    - kpi["Exception %"] * 0.4
+)
 
 # =========================
-# MERGE TABLES
+# HEADER KPI
 # =========================
-final = pd.merge(delivery_kpi, stop_kpi, on=courier_col, how="left")
-final["Total_Stops"] = final["Total_Stops"].fillna(0)
+c1, c2, c3 = st.columns(3)
 
-# =========================
-# PRODUCTIVITY SCORE
-# =========================
-final["Stops per Delivery"] = final["Total_Stops"] / final["Total_Deliveries"]
-
-# =========================
-# KPI HEADER
-# =========================
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Couriers", len(final))
-col2.metric("Avg Before 12 %", f"{final['Before 12 %'].mean():.2f}%")
-col3.metric("Avg Exception %", f"{final['Exception %'].mean():.2f}%")
+c1.metric("Couriers", len(kpi))
+c2.metric("Avg Before 12%", f"{kpi['Before 12 %'].mean():.1f}%")
+c3.metric("Avg Exception%", f"{kpi['Exception %'].mean():.1f}%")
 
 st.divider()
 
 # =========================
-# RANKING
-# =========================
-st.subheader("🏆 Courier Ranking (Before 12 Performance)")
-
-st.dataframe(
-    final.sort_values("Before 12 %", ascending=False),
-    use_container_width=True
-)
-
-# =========================
 # TOP PERFORMERS
 # =========================
-st.subheader("🔥 Top Couriers")
+st.subheader("🏆 Top Couriers")
 
-st.dataframe(
-    final.sort_values("Before 12 %", ascending=False).head(10),
-    use_container_width=True
+top = kpi.sort_values("Performance Score", ascending=False)
+
+st.dataframe(top, use_container_width=True)
+
+# =========================
+# CHART
+# =========================
+fig = px.bar(
+    top,
+    x=courier_col,
+    y="Performance Score",
+    title="Courier Performance Score"
 )
+
+st.plotly_chart(fig, use_container_width=True)
 
 # =========================
 # LOW PERFORMANCE
 # =========================
-st.subheader("🚨 Low Performance Couriers")
+st.subheader("🚨 Low Performance")
 
 st.dataframe(
-    final.sort_values("Exception %", ascending=False).head(10),
+    kpi.sort_values("Exception %", ascending=False).head(10),
     use_container_width=True
 )
 
 # =========================
-# RAW DATA EXPANDER
+# RAW DATA
 # =========================
 with st.expander("📦 Raw Data"):
     st.dataframe(df, use_container_width=True)
