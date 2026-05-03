@@ -132,3 +132,4 @@ col2.metric("⏰ Before 12%", f"{round(profile['Before12_Rate'],2)}%")
 col3.metric("⚠️ Exception%", f"{round(profile['Exception_Rate'],2)}%")
 
 st.metric("🏆 AI Score", round(profile["AI_Score"], 2))
+st.write(deliveries.head() if deliveries is not None else "NO DATA")
