@@ -1,31 +1,29 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.express as px
 
 # ---------------------------
 # CONFIG
 # ---------------------------
-st.set_page_config(page_title="Ops Control Tower V2", layout="wide")
+st.set_page_config(page_title="Enterprise Ops Control Tower", layout="wide")
 
-st.title("🚚 Ops Control Tower Dashboard V2")
-st.markdown("### Advanced Delivery Performance Analytics")
+st.title("🏢 Enterprise Control Tower V4")
+st.markdown("### Advanced Logistics Intelligence Dashboard")
 
 # ---------------------------
 # UPLOAD
 # ---------------------------
-file = st.file_uploader("Upload File", type=["xlsx", "csv"])
+file = st.file_uploader("Upload Data", type=["xlsx", "csv"])
 
 if file:
 
-    if file.name.endswith("csv"):
-        df = pd.read_csv(file)
-    else:
-        df = pd.read_excel(file)
+    df = pd.read_excel(file) if file.name.endswith("xlsx") else pd.read_csv(file)
 
     st.success("Data Loaded Successfully")
 
     # ---------------------------
-    # CLEAN DATETIME
+    # DATETIME ENGINE
     # ---------------------------
     df["Delivery DateTime"] = pd.to_datetime(
         df["Last Physical Ckpt Date"].astype(str) + " " +
@@ -35,130 +33,151 @@ if file:
 
     df = df.dropna(subset=["Delivery DateTime"])
 
-    # ---------------------------
-    # FEATURES
-    # ---------------------------
     df["Hour"] = df["Delivery DateTime"].dt.hour
     df["Date"] = df["Delivery DateTime"].dt.date
-    df["Week"] = df["Delivery DateTime"].dt.isocalendar().week
-    df["Month"] = df["Delivery DateTime"].dt.to_period("M").astype(str)
 
     df["Before_12"] = df["Delivery DateTime"].dt.time < pd.to_datetime("12:00").time()
-
     df["After_12"] = ~df["Before_12"]
 
-    # ---------------------------
-    # SIDEBAR FILTERS
-    # ---------------------------
-    st.sidebar.header("Filters")
-
-    route_col = st.sidebar.selectbox(
-        "Route Type",
-        ["Dest Route", "Origin Route", "Arrival Route"]
-    )
-
-    time_view = st.sidebar.selectbox(
-        "Time View",
-        ["Daily", "Weekly", "Monthly"]
-    )
-
-    routes = st.sidebar.multiselect(
-        "Select Routes",
-        df[route_col].dropna().unique(),
-        default=df[route_col].dropna().unique()
-    )
-
-    df = df[df[route_col].isin(routes)]
-
-    # ---------------------------
-    # GROUPING
-    # ---------------------------
-    if time_view == "Daily":
-        group_col = "Date"
-    elif time_view == "Weekly":
-        group_col = "Week"
-    else:
-        group_col = "Month"
+    route_col = "Dest Route"
+    station_col = "Arrival Stn"
 
     # ---------------------------
     # KPIs
     # ---------------------------
     total = len(df)
     before12 = df["Before_12"].sum()
-    after12 = df["After_12"].sum()
-
     otd = (before12 / total * 100) if total > 0 else 0
-
-    sla_target = 85
-    sla_gap = otd - sla_target
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("📦 Total", total)
+    col1.metric("📦 Total Shipments", total)
     col2.metric("⏰ Before 12", int(before12))
-    col3.metric("🚨 After 12", int(after12))
+    col3.metric("🚨 After 12", int(df["After_12"].sum()))
     col4.metric("📊 SLA %", f"{otd:.2f}%")
 
     st.divider()
 
     # ---------------------------
+    # SLA BANDS
+    # ---------------------------
+    st.subheader("📊 SLA Performance Bands")
+
+    df["SLA Category"] = np.where(
+        df["Before_12"] == True, "On Time", "Late"
+    )
+
+    sla = df["SLA Category"].value_counts().reset_index()
+    sla.columns = ["Category", "Count"]
+
+    fig1 = px.pie(sla, names="Category", values="Count", title="SLA Split")
+    st.plotly_chart(fig1, use_container_width=True)
+
+    # ---------------------------
     # ROUTE PERFORMANCE
     # ---------------------------
+    st.subheader("🏆 Route Performance Ranking")
+
     route_perf = df.groupby(route_col).agg(
         Total=("Waybill Number", "count"),
         Before_12=("Before_12", "sum")
     ).reset_index()
 
-    route_perf["OTD %"] = (route_perf["Before_12"] / route_perf["Total"] * 100).round(2)
+    route_perf["OTD %"] = (route_perf["Before_12"] / route_perf["Total"] * 100)
 
     route_perf = route_perf.sort_values("OTD %", ascending=False)
 
-    st.subheader("🏆 Route Performance Ranking")
+    fig2 = px.bar(
+        route_perf,
+        x=route_col,
+        y="OTD %",
+        color="OTD %",
+        title="Route Performance (OTD %)"
+    )
 
-    st.dataframe(route_perf, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
 
     # ---------------------------
-    # SUMMARY TREND
+    # HEATMAP (Route x Hour)
     # ---------------------------
-    trend = df.groupby(group_col).agg(
+    st.subheader("🔥 Heatmap: Route vs Hour Activity")
+
+    heatmap = df.groupby([route_col, "Hour"]).size().reset_index(name="Shipments")
+
+    fig3 = px.density_heatmap(
+        heatmap,
+        x="Hour",
+        y=route_col,
+        z="Shipments",
+        color_continuous_scale="Blues",
+        title="Operational Activity Heatmap"
+    )
+
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # ---------------------------
+    # TREND ANALYSIS
+    # ---------------------------
+    st.subheader("📈 Performance Trend")
+
+    trend = df.groupby("Date").agg(
         Total=("Waybill Number", "count"),
         Before_12=("Before_12", "sum")
     ).reset_index()
 
-    trend["OTD %"] = (trend["Before_12"] / trend["Total"] * 100).round(2)
+    trend["OTD %"] = trend["Before_12"] / trend["Total"] * 100
 
-    st.subheader("📈 Performance Trend")
+    fig4 = px.line(
+        trend,
+        x="Date",
+        y="OTD %",
+        markers=True,
+        title="Daily OTD Trend"
+    )
 
-    st.dataframe(trend, use_container_width=True)
-
-    # ---------------------------
-    # HOURLY HEATMAP DATA
-    # ---------------------------
-    st.subheader("⏱️ Hourly Delivery Pattern")
-
-    heatmap = df.groupby(["Hour", route_col]).size().reset_index(name="Deliveries")
-
-    st.dataframe(heatmap, use_container_width=True)
+    st.plotly_chart(fig4, use_container_width=True)
 
     # ---------------------------
-    # SLA INSIGHT
+    # STATION PERFORMANCE
     # ---------------------------
-    st.subheader("💡 Insights")
+    st.subheader("📍 Station Performance")
 
-    if otd >= sla_target:
-        st.success(f"✔ SLA Achieved: {otd:.2f}% ≥ {sla_target}%")
-    else:
-        st.error(f"⚠ SLA Missed: {otd:.2f}% < {sla_target}%")
+    station_perf = df.groupby(station_col).agg(
+        Total=("Waybill Number", "count"),
+        Before_12=("Before_12", "sum")
+    ).reset_index()
 
-    worst_routes = route_perf.tail(3)[route_col].tolist()
+    station_perf["OTD %"] = station_perf["Before_12"] / station_perf["Total"] * 100
 
-    st.warning(f"🚨 Weak Routes: {', '.join(map(str, worst_routes))}")
+    st.dataframe(station_perf.sort_values("OTD %", ascending=False), use_container_width=True)
 
     # ---------------------------
-    # RAW DATA
+    # INSIGHTS ENGINE (Simple AI Logic)
     # ---------------------------
-    with st.expander("📄 Raw Data"):
-        st.dataframe(df, use_container_width=True)
+    st.subheader("🧠 Auto Insights")
+
+    worst_route = route_perf.tail(1)[route_col].values[0]
+    best_route = route_perf.head(1)[route_col].values[0]
+
+    peak_hour = df["Hour"].value_counts().idxmax()
+
+    st.warning(f"🚨 Weakest Route: {worst_route}")
+    st.success(f"🏆 Best Route: {best_route}")
+    st.info(f"⏰ Peak Operational Hour: {peak_hour}:00")
+
+    # ---------------------------
+    # EXPORT
+    # ---------------------------
+    st.subheader("📤 Export Data")
+
+    csv = df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="Download Processed Data",
+        data=csv,
+        file_name="processed_ops_data.csv",
+        mime="text/csv"
+    )
 
 else:
-    st.info("Upload file to start analytics")
+    st.info("Upload file to start Enterprise Analytics")
