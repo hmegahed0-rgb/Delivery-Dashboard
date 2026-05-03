@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import numpy as np
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="Courier Control Tower AI v2", layout="wide")
+st.set_page_config(page_title="Courier Profile Dashboard", layout="wide")
 
-st.title("🚚 Courier Operations Control Tower - AI v2")
+st.title("👤 Courier Profile Dashboard (Enterprise v3)")
 
 # =========================
 # LOAD DATA
@@ -25,10 +24,10 @@ def load_data():
 
 df, stops = load_data()
 
-st.success("✅ Data Loaded & Cleaned")
+st.success("Data Loaded Successfully ✅")
 
 # =========================
-# SMART COLUMN DETECTOR (AI STYLE)
+# SMART DETECTION
 # =========================
 def find_col(df, keywords):
     for col in df.columns:
@@ -38,115 +37,140 @@ def find_col(df, keywords):
     return None
 
 courier_col = find_col(df, ["courier id", "courier"])
-time_col = find_col(df, ["act tm", "actual", "time"])
+time_col = find_col(df, ["act tm", "time"])
 status_col = find_col(df, ["ckpt", "status", "code"])
 
+# =========================
+# VALIDATION
+# =========================
 if courier_col is None or time_col is None:
-    st.error("❌ Required columns not found")
+    st.error("Missing required columns")
     st.stop()
 
 # =========================
-# CLEAN TIME
+# CLEAN DATA
 # =========================
 df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+df = df.dropna(subset=[courier_col, time_col])
+df = df.drop_duplicates()
 
-# =========================
-# AI FEATURES ENGINE
-# =========================
 df["hour"] = df[time_col].dt.hour
 df["Before_12"] = df["hour"] < 12
 
-# Exception detection (smart)
 df["Exception"] = df.get(status_col, "OK").astype(str).str.upper().ne("OK")
 
 # =========================
-# AI SCORING MODEL (Weighted)
+# KPI TABLE
 # =========================
-courier_kpi = df.groupby(courier_col).agg(
-    Total_Stops=(courier_col, "count"),
-    Before_12_Count=("Before_12", "sum"),
+kpi = df.groupby(courier_col).agg(
+    Total_Stops=(courier_col, "size"),
+    Before_12=("Before_12", "sum"),
     Exceptions=("Exception", "sum"),
     Avg_Hour=("hour", "mean")
 ).reset_index()
 
-courier_kpi["Before_12_%"] = (courier_kpi["Before_12_Count"] / courier_kpi["Total_Stops"]) * 100
-courier_kpi["Exception_%"] = (courier_kpi["Exceptions"] / courier_kpi["Total_Stops"]) * 100
+kpi["Before_12_%"] = (kpi["Before_12"] / kpi["Total_Stops"]) * 100
+kpi["Exception_%"] = (kpi["Exceptions"] / kpi["Total_Stops"]) * 100
 
-# AI Score (weighted model)
-courier_kpi["AI_Score"] = (
-    courier_kpi["Before_12_%"] * 0.65
-    - courier_kpi["Exception_%"] * 0.35
-    + (10 - courier_kpi["Avg_Hour"].fillna(10))
+kpi["Score"] = (
+    kpi["Before_12_%"] * 0.65
+    - kpi["Exception_%"] * 0.35
+    + (10 - kpi["Avg_Hour"].fillna(10))
 )
 
-# Normalize score
-courier_kpi["AI_Score"] = np.round(courier_kpi["AI_Score"], 2)
+# =========================
+# SIDEBAR PROFILE SELECTOR
+# =========================
+st.sidebar.header("👤 Courier Profile")
+
+selected = st.sidebar.selectbox(
+    "Select Courier",
+    sorted(kpi[courier_col].unique())
+)
+
+profile = kpi[kpi[courier_col] == selected].iloc[0]
 
 # =========================
-# KPI HEADER
+# PROFILE HEADER
 # =========================
+st.subheader(f"📊 Profile: {selected}")
+
 c1, c2, c3, c4 = st.columns(4)
 
-c1.metric("Couriers", len(courier_kpi))
-c2.metric("Avg Before 12%", f"{courier_kpi['Before_12_%'].mean():.1f}%")
-c3.metric("Avg Exception%", f"{courier_kpi['Exception_%'].mean():.1f}%")
-c4.metric("AI Score Avg", f"{courier_kpi['AI_Score'].mean():.1f}")
+c1.metric("Total Stops", int(profile["Total_Stops"]))
+c2.metric("Before 12 %", f"{profile['Before_12_%']:.1f}%")
+c3.metric("Exception %", f"{profile['Exception_%']:.1f}%")
+c4.metric("AI Score", f"{profile['Score']:.2f}")
 
 st.divider()
 
 # =========================
-# FILTER
+# FILTER DATA FOR COURIER
 # =========================
-selected = st.selectbox("Select Courier", ["All"] + list(courier_kpi[courier_col]))
-
-if selected != "All":
-    courier_kpi = courier_kpi[courier_kpi[courier_col] == selected]
+courier_df = df[df[courier_col] == selected]
 
 # =========================
-# TOP PERFORMANCE
+# DAILY PERFORMANCE
 # =========================
-st.subheader("🏆 AI Performance Ranking")
+st.subheader("📅 Daily Activity")
 
-st.dataframe(
-    courier_kpi.sort_values("AI_Score", ascending=False),
-    use_container_width=True
-)
+daily = courier_df.copy()
+daily["Date"] = daily[time_col].dt.date
 
-# =========================
-# CHARTS
-# =========================
-fig1 = px.bar(
-    courier_kpi.sort_values("AI_Score", ascending=False),
-    x=courier_col,
-    y="AI_Score",
-    title="AI Courier Score"
-)
+daily_kpi = daily.groupby("Date").agg(
+    Stops=(courier_col, "count"),
+    Before_12=("Before_12", "sum"),
+    Exceptions=("Exception", "sum")
+).reset_index()
 
+st.dataframe(daily_kpi, use_container_width=True)
+
+fig1 = px.line(daily_kpi, x="Date", y="Stops", title="Daily Stops Trend")
 st.plotly_chart(fig1, use_container_width=True)
 
-fig2 = px.scatter(
-    courier_kpi,
-    x="Before_12_%",
-    y="Exception_%",
-    size="Total_Stops",
-    color="AI_Score",
-    title="Performance Matrix (Before 12 vs Exceptions)"
+# =========================
+# BEFORE 12 BREAKDOWN
+# =========================
+st.subheader("⏰ Before 12 Performance")
+
+fig2 = px.histogram(
+    courier_df,
+    x="hour",
+    title="Hourly Distribution"
 )
 
 st.plotly_chart(fig2, use_container_width=True)
 
 # =========================
-# EXCEPTION HEAT VIEW
+# EXCEPTIONS DETAIL
 # =========================
-st.subheader("🚨 Risk Analysis")
+st.subheader("🚨 Exceptions Breakdown")
 
-st.dataframe(
-    courier_kpi.sort_values("Exception_%", ascending=False),
-    use_container_width=True
-)
+exceptions = courier_df[courier_df["Exception"] == True]
+
+st.write(f"Total Exceptions: {len(exceptions)}")
+
+st.dataframe(exceptions, use_container_width=True)
+
+# =========================
+# COMPARISON VS COMPANY
+# =========================
+st.subheader("📊 vs Company Average")
+
+avg_before = kpi["Before_12_%"].mean()
+avg_exc = kpi["Exception_%"].mean()
+
+comp = pd.DataFrame({
+    "Metric": ["Before 12 %", "Exception %"],
+    "Courier": [profile["Before_12_%"], profile["Exception_%"]],
+    "Company Avg": [avg_before, avg_exc]
+})
+
+fig3 = px.bar(comp, x="Metric", y=["Courier", "Company Avg"], barmode="group")
+st.plotly_chart(fig3, use_container_width=True)
 
 # =========================
 # RAW DATA
 # =========================
-with st.expander("📦 Raw Data View"):
-    st.dataframe(df, use_container_width=True)
+with st.expander("📦 Raw Courier Data"):
+    st.dataframe(courier_df, use_container_width=True)
