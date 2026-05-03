@@ -1,0 +1,132 @@
+import streamlit as st
+import pandas as pd
+
+# ---------------------------
+# CONFIG
+# ---------------------------
+st.set_page_config(
+    page_title="Delivery Ops Dashboard",
+    layout="wide"
+)
+
+st.title("📦 Delivery Operations Dashboard")
+st.markdown("### Analysis: Deliveries Before 12:00 PM")
+
+# ---------------------------
+# UPLOAD FILE
+# ---------------------------
+file = st.file_uploader("Upload Excel / CSV File", type=["xlsx", "csv"])
+
+if file:
+
+    # Load data
+    if file.name.endswith(".csv"):
+        df = pd.read_csv(file)
+    else:
+        df = pd.read_excel(file)
+
+    st.success("✅ File loaded successfully!")
+
+    # ---------------------------
+    # CLEAN + DATETIME BUILD
+    # ---------------------------
+    df["Delivery DateTime"] = pd.to_datetime(
+        df["Last Physical Ckpt Date"].astype(str) + " " +
+        df["Last Physical Ckpt Time"].astype(str),
+        errors="coerce"
+    )
+
+    # Remove invalid rows
+    df = df.dropna(subset=["Delivery DateTime"])
+
+    # ---------------------------
+    # BEFORE 12 FLAG
+    # ---------------------------
+    df["Before_12"] = df["Delivery DateTime"].dt.time < pd.to_datetime("12:00").time()
+
+    # ---------------------------
+    # TIME DIMENSIONS
+    # ---------------------------
+    df["Date"] = df["Delivery DateTime"].dt.date
+    df["Week"] = df["Delivery DateTime"].dt.isocalendar().week
+    df["Month"] = df["Delivery DateTime"].dt.to_period("M").astype(str)
+
+    # ---------------------------
+    # SIDEBAR FILTERS
+    # ---------------------------
+    st.sidebar.header("🔎 Filters")
+
+    level = st.sidebar.selectbox("Time View", ["Daily", "Weekly", "Monthly"])
+
+    route_col = st.sidebar.selectbox(
+        "Select Route Column",
+        ["Dest Route", "Origin Route", "Arrival Route"]
+    )
+
+    selected_routes = st.sidebar.multiselect(
+        "Select Routes",
+        df[route_col].dropna().unique(),
+        default=df[route_col].dropna().unique()
+    )
+
+    # Apply filter
+    df = df[df[route_col].isin(selected_routes)]
+
+    # Grouping logic
+    if level == "Daily":
+        group_col = "Date"
+    elif level == "Weekly":
+        group_col = "Week"
+    else:
+        group_col = "Month"
+
+    # ---------------------------
+    # KPIs
+    # ---------------------------
+    total = len(df)
+    before12 = df["Before_12"].sum()
+    otd = (before12 / total * 100) if total > 0 else 0
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("📦 Total Deliveries", total)
+    col2.metric("⏰ Before 12", int(before12))
+    col3.metric("📊 OTD % Before 12", f"{otd:.2f}%")
+
+    st.divider()
+
+    # ---------------------------
+    # SUMMARY TABLE
+    # ---------------------------
+    summary = df.groupby([route_col, group_col]).agg(
+        Total_Deliveries=("Waybill Number", "count"),
+        Before_12=("Before_12", "sum")
+    ).reset_index()
+
+    summary["OTD %"] = (
+        summary["Before_12"] / summary["Total_Deliveries"] * 100
+    ).round(2)
+
+    st.subheader("📊 Route Performance Summary")
+
+    st.dataframe(summary, use_container_width=True)
+
+    # ---------------------------
+    # ROUTE DETAIL
+    # ---------------------------
+    st.subheader("🚚 Route Drilldown")
+
+    selected_route = st.selectbox("Select Single Route", df[route_col].dropna().unique())
+
+    route_view = summary[summary[route_col] == selected_route]
+
+    st.dataframe(route_view, use_container_width=True)
+
+    # ---------------------------
+    # RAW DATA (optional)
+    # ---------------------------
+    with st.expander("📄 Show Raw Data"):
+        st.dataframe(df, use_container_width=True)
+
+else:
+    st.info("⬆ Upload file to start analysis")
