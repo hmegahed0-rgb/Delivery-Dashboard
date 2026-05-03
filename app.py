@@ -1,111 +1,86 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
+
+st.set_page_config(page_title="Courier Control Tower", layout="wide")
 
 # =========================
-# PAGE CONFIG
-# =========================
-st.set_page_config(
-    page_title="Courier Control Tower",
-    layout="wide"
-)
-
-st.title("🚚 Courier Operations Control Tower (Enterprise v4)")
-
-# =========================
-# LOAD DATA
+# LOAD RAW DATA
 # =========================
 @st.cache_data
 def load_data():
-    df = pd.read_csv("clean_courier_kpi.csv")
-    return df
+    deliveries = pd.read_csv("deliveries.csv", encoding="utf-8", low_memory=False)
+    stops = pd.read_csv("stops.csv", encoding="utf-8", low_memory=False)
 
-df = load_data()
+    deliveries.columns = deliveries.columns.str.strip()
+    stops.columns = stops.columns.str.strip()
 
-st.success("Data Loaded Successfully ✅")
+    # Courier normalization
+    if "Courier ID" in deliveries.columns:
+        deliveries["Courier ID"] = deliveries["Courier ID"].astype(str).str.upper().str.strip()
+
+    if "Courier id" in stops.columns:
+        stops["Courier id"] = stops["Courier id"].astype(str).str.upper().str.strip()
+
+    # datetime
+    if "Act Tm" in deliveries.columns:
+        deliveries["Act Tm"] = pd.to_datetime(deliveries["Act Tm"], errors="coerce")
+
+    # KPI before 12
+    deliveries["Before_12"] = deliveries["Act Tm"].dt.hour < 12
+
+    # exception
+    keywords = ["delay", "failed", "exception", "undel", "return", "hold"]
+
+    if "PUD Info" in stops.columns:
+        stops["Exception"] = stops["PUD Info"].fillna("").astype(str).str.lower().apply(
+            lambda x: any(k in x for k in keywords)
+        )
+    else:
+        stops["Exception"] = False
+
+    return deliveries, stops
+
+
+deliveries, stops = load_data()
 
 # =========================
-# SIDEBAR FILTER
+# KPI CALCULATION
 # =========================
-courier = st.sidebar.selectbox(
-    "👤 Select Courier",
-    df["Courier ID"].unique()
+delivery_kpi = deliveries.groupby("Courier ID").agg(
+    Total_Deliveries=("Courier ID", "count"),
+    Before12_Rate=("Before_12", "mean")
+).reset_index()
+
+stops_kpi = stops.groupby("Courier id").agg(
+    Total_Stops=("Courier id", "count"),
+    Exception_Rate=("Exception", "mean")
+).reset_index()
+
+final = pd.merge(
+    delivery_kpi,
+    stops_kpi,
+    left_on="Courier ID",
+    right_on="Courier id",
+    how="outer"
 )
 
-user_data = df[df["Courier ID"] == courier]
+final = final.fillna(0)
+
+final["Before12_Rate"] = (final["Before12_Rate"] * 100).round(2)
+final["Exception_Rate"] = (final["Exception_Rate"] * 100).round(2)
 
 # =========================
-# KPI CARDS
+# UI
 # =========================
-col1, col2, col3, col4 = st.columns(4)
+st.title("🚚 Courier Operations Control Tower (Enterprise v4)")
 
-col1.metric("📦 Total Deliveries", int(user_data["Total_Deliveries"].sum()))
-col2.metric("⏰ Before 12 %", f'{user_data["Before12_Rate"].values[0]:.2f}%')
-col3.metric("🔴 Exception %", f'{user_data["Exception_Rate"].values[0]:.2f}%')
+courier = st.selectbox("Select Courier", final["Courier ID"].unique())
 
-# AI SCORE (simple model)
-score = (
-    user_data["Before12_Rate"].values[0] * 0.6
-    + (100 - user_data["Exception_Rate"].values[0]) * 0.4
-)
+profile = final[final["Courier ID"] == courier]
 
-col4.metric("🏆 AI Score", f"{score:.1f}")
+st.metric("Total Stops", int(profile["Total_Stops"].values[0]))
+st.metric("Before 12 %", float(profile["Before12_Rate"].values[0]))
+st.metric("Exception %", float(profile["Exception_Rate"].values[0]))
 
-# =========================
-# RANKING TABLE
-# =========================
-st.subheader("🏆 Courier Ranking")
-
-df["Score"] = (
-    df["Before12_Rate"] * 0.6 +
-    (100 - df["Exception_Rate"]) * 0.4
-)
-
-ranking = df.sort_values("Score", ascending=False)
-
-st.dataframe(ranking[[
-    "Courier ID",
-    "Total_Deliveries",
-    "Before12_Rate",
-    "Exception_Rate",
-    "Score"
-]])
-
-# =========================
-# CHART 1 - BEFORE 12
-# =========================
-st.subheader("⏰ Before 12 Performance")
-
-fig1 = px.bar(
-    df,
-    x="Courier ID",
-    y="Before12_Rate",
-    text="Before12_Rate"
-)
-st.plotly_chart(fig1, use_container_width=True)
-
-# =========================
-# CHART 2 - EXCEPTIONS
-# =========================
-st.subheader("🔴 Exception Rate")
-
-fig2 = px.bar(
-    df,
-    x="Courier ID",
-    y="Exception_Rate",
-    text="Exception_Rate"
-)
-st.plotly_chart(fig2, use_container_width=True)
-
-# =========================
-# CHART 3 - SCORE
-# =========================
-st.subheader("🏆 Performance Score")
-
-fig3 = px.bar(
-    df,
-    x="Courier ID",
-    y="Score",
-    text="Score"
-)
-st.plotly_chart(fig3, use_container_width=True)
+st.dataframe(final)
