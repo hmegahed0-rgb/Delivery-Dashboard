@@ -134,3 +134,19 @@ col3.metric("Exception %", f"{profile['Exception_Rate'].values[0]}%")
 # =========================
 st.subheader("📊 Courier Performance Table")
 st.dataframe(final, use_container_width=True)
+def safe_read(file):
+    try:
+        df = pd.read_csv(file, encoding="utf-8", engine="python")
+        if df.empty or len(df.columns) == 0:
+            return None
+        return df
+    except:
+        return None
+
+
+deliveries = safe_read("deliveries.csv")
+stops = safe_read("stops.csv")
+
+if deliveries is None or stops is None:
+    st.error("❌ CSV files are corrupted or empty. Please re-upload them correctly.")
+    st.stop()
