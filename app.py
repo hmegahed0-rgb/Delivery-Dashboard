@@ -1,58 +1,51 @@
 import streamlit as st
 import pandas as pd
 
-# =========================
-# PAGE CONFIG
-# =========================
-st.set_page_config(
-    page_title="Courier Control Tower",
-    layout="wide"
-)
-
-st.title("🚚 Courier Operations Control Tower (Enterprise STABLE)")
+st.set_page_config(page_title="AI Courier Control Tower", layout="wide")
+st.title("🤖🚚 AI Smart Courier Pipeline (Enterprise V6)")
 
 # =========================
-# SAFE CSV LOADER (FIX ALL ERRORS)
+# SAFE CSV LOADER (AI ROBUST)
 # =========================
-def load_csv_safe(file_path):
+def load_csv(file):
     try:
-        # Try normal read first
-        df = pd.read_csv(file_path, encoding="utf-8", low_memory=False)
-
-        # If broken (no columns)
-        if df is None or df.empty or len(df.columns) == 0:
+        df = pd.read_csv(file, encoding="utf-8", low_memory=False)
+        if df is None or df.empty:
             return None
-
         return df
-
-    except Exception:
+    except:
         try:
-            # fallback encoding
-            df = pd.read_csv(file_path, encoding="latin1", low_memory=False)
-
-            if df is None or df.empty or len(df.columns) == 0:
+            df = pd.read_csv(file, encoding="latin1", low_memory=False)
+            if df is None or df.empty:
                 return None
-
             return df
-
-        except Exception:
+        except:
             return None
+
+
+# =========================
+# AI COLUMN DETECTOR
+# =========================
+def detect_column(df, keywords):
+    for col in df.columns:
+        col_clean = col.strip().lower()
+        for k in keywords:
+            if k.lower() in col_clean:
+                return col
+    return None
 
 
 # =========================
 # LOAD DATA
 # =========================
-deliveries = load_csv_safe("deliveries.csv")
-stops = load_csv_safe("stops.csv")
+deliveries = load_csv("deliveries.csv")
+stops = load_csv("stops.csv")
 
-# =========================
-# VALIDATION
-# =========================
 if deliveries is None or stops is None:
-    st.error("❌ CSV files are missing, empty, or corrupted.")
+    st.error("❌ Data not found or corrupted")
     st.stop()
 
-st.success("Data Loaded Successfully ✅")
+st.success("AI Engine Loaded Data Successfully ✅")
 
 # =========================
 # CLEAN COLUMNS
@@ -61,96 +54,116 @@ deliveries.columns = deliveries.columns.str.strip()
 stops.columns = stops.columns.str.strip()
 
 # =========================
-# STANDARDIZE COURIER ID
+# AI COLUMN MAPPING
 # =========================
-if "Courier ID" in deliveries.columns:
-    deliveries["Courier ID"] = deliveries["Courier ID"].astype(str).str.upper().str.strip()
+delivery_courier = detect_column(deliveries, ["courier"])
+stop_courier = detect_column(stops, ["courier"])
 
-if "Courier id" in stops.columns:
-    stops["Courier id"] = stops["Courier id"].astype(str).str.upper().str.strip()
+act_time_col = detect_column(deliveries, ["act tm", "act time"])
+pud_info_col = detect_column(stops, ["pud info", "info", "status"])
 
-# =========================
-# DATETIME FIX
-# =========================
-if "Act Tm" in deliveries.columns:
-    deliveries["Act Tm"] = pd.to_datetime(deliveries["Act Tm"], errors="coerce")
+if delivery_courier is None or stop_courier is None:
+    st.error("❌ Cannot detect Courier column automatically")
+    st.stop()
 
 # =========================
-# KPI: BEFORE 12
+# STANDARDIZE
 # =========================
-if "Act Tm" in deliveries.columns:
-    deliveries["Before_12"] = deliveries["Act Tm"].dt.hour < 12
+deliveries[delivery_courier] = deliveries[delivery_courier].astype(str).str.upper()
+stops[stop_courier] = stops[stop_courier].astype(str).str.upper()
+
+# =========================
+# DATETIME SAFE
+# =========================
+if act_time_col:
+    deliveries[act_time_col] = pd.to_datetime(deliveries[act_time_col], errors="coerce")
+    deliveries["Before_12"] = deliveries[act_time_col].dt.hour < 12
 else:
     deliveries["Before_12"] = False
 
 # =========================
-# EXCEPTION LOGIC
+# EXCEPTION AI DETECTION
 # =========================
 keywords = ["delay", "failed", "exception", "undel", "return", "hold"]
 
-if "PUD Info" in stops.columns:
-    stops["Exception"] = stops["PUD Info"].fillna("").astype(str).str.lower().apply(
+if pud_info_col:
+    stops["Exception"] = stops[pud_info_col].fillna("").astype(str).str.lower().apply(
         lambda x: any(k in x for k in keywords)
     )
 else:
     stops["Exception"] = False
 
 # =========================
-# KPI CALCULATION
+# KPI ENGINE (AI SAFE)
 # =========================
-delivery_kpi = deliveries.groupby("Courier ID").agg(
-    Total_Deliveries=("Courier ID", "count"),
+delivery_kpi = deliveries.groupby(delivery_courier).agg(
+    Total_Deliveries=(delivery_courier, "count"),
     Before12_Rate=("Before_12", lambda x: x.mean() if len(x) > 0 else 0)
 ).reset_index()
 
-stops_kpi = stops.groupby("Courier id").agg(
-    Total_Stops=("Courier id", "count"),
+stop_kpi = stops.groupby(stop_courier).agg(
+    Total_Stops=(stop_courier, "count"),
     Exception_Rate=("Exception", lambda x: x.mean() if len(x) > 0 else 0)
 ).reset_index()
 
 # =========================
-# MERGE
+# MERGE AI VIEW
 # =========================
 final = pd.merge(
     delivery_kpi,
-    stops_kpi,
-    left_on="Courier ID",
-    right_on="Courier id",
+    stop_kpi,
+    left_on=delivery_courier,
+    right_on=stop_courier,
     how="outer"
-)
-
-final = final.fillna(0)
+).fillna(0)
 
 final["Before12_Rate"] = (final["Before12_Rate"] * 100).round(2)
 final["Exception_Rate"] = (final["Exception_Rate"] * 100).round(2)
 
-# =========================
-# UI FILTER
-# =========================
-courier = st.selectbox("Select Courier", final["Courier ID"].astype(str).unique())
-
-profile = final[final["Courier ID"] == courier]
+final.rename(columns={delivery_courier: "Courier"}, inplace=True)
 
 # =========================
-# METRICS
+# AI COURIER SELECTOR
+# =========================
+courier = st.selectbox("🤖 Select Courier (AI Detected)", final["Courier"].unique())
+
+profile = final[final["Courier"] == courier]
+
+# =========================
+# DASHBOARD KPIs
 # =========================
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Total Stops", int(profile["Total_Stops"].values[0]))
-col2.metric("Before 12 %", f"{profile['Before12_Rate'].values[0]}%")
-col3.metric("Exception %", f"{profile['Exception_Rate'].values[0]}%")
+col1.metric("🚚 Total Stops", int(profile["Total_Stops"].values[0]))
+col2.metric("⏰ Before 12%", f"{profile['Before12_Rate'].values[0]}%")
+col3.metric("⚠️ Exception%", f"{profile['Exception_Rate'].values[0]}%")
+
+# =========================
+# AI SCORE ENGINE
+# =========================
+score = (
+    profile["Before12_Rate"].values[0] * 0.5
+    + (100 - profile["Exception_Rate"].values[0]) * 0.5
+)
+
+st.subheader("🧠 AI Performance Score")
+st.progress(int(score))
+st.write(f"AI Score: {round(score,2)} / 100")
 
 # =========================
 # TABLE
 # =========================
-st.subheader("📊 Full Courier Performance")
+st.subheader("📊 AI Full Analytics View")
 st.dataframe(final, use_container_width=True)
 
 # =========================
-# DEBUG (optional)
+# DEBUG PANEL
 # =========================
-with st.expander("🔍 Debug Info"):
-    st.write("Deliveries shape:", deliveries.shape)
-    st.write("Stops shape:", stops.shape)
-    st.write("Columns deliveries:", list(deliveries.columns))
-    st.write("Columns stops:", list(stops.columns))
+with st.expander("🔍 AI Debug Engine"):
+    st.write("Detected Columns:")
+    st.write({
+        "Courier (Deliveries)": delivery_courier,
+        "Courier (Stops)": stop_courier,
+        "Time Column": act_time_col,
+        "Info Column": pud_info_col
+    })
